@@ -116,7 +116,6 @@ def reprocesar_imagen():
 
     return jsonify({"message": "Imagen reprocesada correctamente", "images": processed_images})
 
-# Ruta para eliminar una imagen
 @app.route('/eliminar_imagen', methods=['POST'])
 def eliminar_imagen():
     data = request.get_json()
@@ -141,9 +140,5 @@ def eliminar_imagen():
 
 # Ejecuta la aplicación Flask
 if __name__ == '__main__':
-    # Iniciar un túnel ngrok en el puerto 5000
-    public_url = ngrok.connect(5000)
-    print(f" * ngrok URL: {public_url}")
-
-    # Ejecuta Flask en el puerto 5000
-    app.run(port=5000)
+    port = int(os.environ.get("PORT", 5000))  # Usar el puerto definido por Render
+    app.run(host="0.0.0.0", port=port)
