@@ -1,35 +1,25 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template
 import os
-import tensorflow as tf
 import uuid
 import cv2
 from utils import process_image  # Simulación de procesamiento
 from flask_cors import CORS
-from deepface import DeepFace
-import mediapipe as mp
 
-# Configurar el entorno para TensorFlow
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # Ocultar logs innecesarios de TensorFlow
-
-# Crear la aplicación Flask
 app = Flask(__name__)
 CORS(app)
 
 # Crear carpetas necesarias
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-imagenes_cliente_path = os.path.join(BASE_DIR, 'imagenesCliente')
-processed_images_path = os.path.join(BASE_DIR, 'processed_images')
-os.makedirs(imagenes_cliente_path, exist_ok=True)
-os.makedirs(processed_images_path, exist_ok=True)
+imagenes_cliente_path = os.path.join(os.getcwd(), 'imagenesCliente')
+if not os.path.exists(imagenes_cliente_path):
+    os.makedirs(imagenes_cliente_path)
+
+processed_images_path = os.path.join(os.getcwd(), 'processed_images')
+if not os.path.exists(processed_images_path):
+    os.makedirs(processed_images_path)
 
 # Configuración de carpetas
 app.config['IMAGENES_CLIENTE_FOLDER'] = imagenes_cliente_path
 app.config['PROCESSED_IMAGES_FOLDER'] = processed_images_path
-
-# Inicializar MediaPipe FaceMesh
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5)
 
 # Función para redimensionar imágenes grandes con OpenCV
 def resize_image(image_path, max_width=800):
@@ -59,51 +49,33 @@ def upload_image():
         return jsonify({"error": "No se encontró ninguna imagen"}), 400
 
     file = request.files['image']
+    
+    # Crear un nombre único para la imagen original
     unique_filename = f"{uuid.uuid4()}.jpg"
     temp_file_path = os.path.join(app.config['IMAGENES_CLIENTE_FOLDER'], unique_filename)
-
+    
     # Guardar la imagen original temporalmente
     file.save(temp_file_path)
 
     # Redimensionar la imagen si es grande
     resize_image(temp_file_path)
 
-    try:
-        # Procesar la imagen con MediaPipe FaceMesh
-        img = cv2.imread(temp_file_path)
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = face_mesh.process(img_rgb)
+    # Procesar la imagen
+    result = process_image(temp_file_path)
 
-        if not results.multi_face_landmarks:
-            return jsonify({"error": "No se detectaron rostros"}), 400
+    # Guardar las imágenes procesadas (sobrescribir siempre las mismas 4)
+    processed_images = []
+    for idx, img_data in enumerate(result["images"]):
+        processed_image_name = f"processed_image_{idx}.jpg"
+        processed_image_path = os.path.join(app.config['PROCESSED_IMAGES_FOLDER'], processed_image_name)
+        
+        # Sobrescribir el archivo procesado
+        with open(processed_image_path, "wb") as f:
+            f.write(img_data)
+        
+        processed_images.append(f"/processed_images/{processed_image_name}")
 
-        # Analizar emociones con DeepFace
-        emotion_analysis = DeepFace.analyze(temp_file_path, actions=['emotion'], enforce_detection=False)
-
-        # Guardar las imágenes procesadas (sobrescribir siempre las mismas 4)
-        processed_images = []
-        for idx, face_landmarks in enumerate(results.multi_face_landmarks):
-            processed_image_name = f"processed_image_{idx}.jpg"
-            processed_image_path = os.path.join(app.config['PROCESSED_IMAGES_FOLDER'], processed_image_name)
-
-            # Dibujar los landmarks faciales en la imagen
-            annotated_image = img.copy()
-            for landmark in face_landmarks.landmark:
-                x = int(landmark.x * img.shape[1])
-                y = int(landmark.y * img.shape[0])
-                cv2.circle(annotated_image, (x, y), 1, (0, 255, 0), -1)
-
-            cv2.imwrite(processed_image_path, annotated_image)
-            processed_images.append(f"/processed_images/{processed_image_name}")
-
-        return jsonify({
-            "message": "Imágenes procesadas correctamente",
-            "images": processed_images,
-            "emotions": emotion_analysis
-        })
-
-    except Exception as e:
-        return jsonify({"error": f"Error procesando la imagen: {str(e)}"}), 500
+    return jsonify({"message": "Imágenes procesadas correctamente", "images": processed_images})
 
 @app.route('/historico_imagenes')
 def ver_historico():
@@ -129,42 +101,20 @@ def reprocesar_imagen():
     if not os.path.exists(image_path):
         return jsonify({"error": "La imagen no existe"}), 404
 
-    try:
-        # Procesar la imagen con MediaPipe FaceMesh
-        img = cv2.imread(image_path)
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = face_mesh.process(img_rgb)
+    result = process_image(image_path)
 
-        if not results.multi_face_landmarks:
-            return jsonify({"error": "No se detectaron rostros"}), 400
+    # Sobrescribir siempre las mismas imágenes procesadas
+    processed_images = []
+    for idx, img_data in enumerate(result["images"]):
+        processed_image_name = f"processed_image_{idx}.jpg"
+        processed_image_path = os.path.join(app.config['PROCESSED_IMAGES_FOLDER'], processed_image_name)
+        
+        with open(processed_image_path, "wb") as f:
+            f.write(img_data)
+        
+        processed_images.append(f"/processed_images/{processed_image_name}")
 
-        # Analizar emociones con DeepFace
-        emotion_analysis = DeepFace.analyze(image_path, actions=['emotion'], enforce_detection=False)
-
-        # Sobrescribir siempre las mismas imágenes procesadas
-        processed_images = []
-        for idx, face_landmarks in enumerate(results.multi_face_landmarks):
-            processed_image_name = f"processed_image_{idx}.jpg"
-            processed_image_path = os.path.join(app.config['PROCESSED_IMAGES_FOLDER'], processed_image_name)
-
-            # Dibujar los landmarks faciales en la imagen
-            annotated_image = img.copy()
-            for landmark in face_landmarks.landmark:
-                x = int(landmark.x * img.shape[1])
-                y = int(landmark.y * img.shape[0])
-                cv2.circle(annotated_image, (x, y), 1, (0, 255, 0), -1)
-
-            cv2.imwrite(processed_image_path, annotated_image)
-            processed_images.append(f"/processed_images/{processed_image_name}")
-
-        return jsonify({
-            "message": "Imagen reprocesada correctamente",
-            "images": processed_images,
-            "emotions": emotion_analysis
-        })
-
-    except Exception as e:
-        return jsonify({"error": f"Error reprocesando la imagen: {str(e)}"}), 500
+    return jsonify({"message": "Imagen reprocesada correctamente", "images": processed_images})
 
 # Ruta para eliminar una imagen
 @app.route('/eliminar_imagen', methods=['POST'])
@@ -174,13 +124,16 @@ def eliminar_imagen():
 
     if not image_url:
         return jsonify({'success': False, 'message': 'No se proporcionó una URL de imagen'}), 400
-
+    
+    # Asumimos que la imagen está en la carpeta 'imagenesCliente'
     imagenes_cliente_path = os.path.join(app.config['IMAGENES_CLIENTE_FOLDER'], os.path.basename(image_url))
 
+    # Verificar si la imagen existe
     if not os.path.exists(imagenes_cliente_path):
         return jsonify({'success': False, 'message': 'La imagen no existe en el servidor'}), 404
 
     try:
+        # Eliminar el archivo
         os.remove(imagenes_cliente_path)
         return jsonify({'success': True, 'message': 'Imagen eliminada con éxito'}), 200
     except Exception as e:
