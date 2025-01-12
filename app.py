@@ -141,5 +141,9 @@ def eliminar_imagen():
 
 # Ejecuta la aplicación Flask
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    # Iniciar un túnel ngrok en el puerto 5000
+    public_url = ngrok.connect(5000)
+    print(f" * ngrok URL: {public_url}")
+
+    # Ejecuta Flask en el puerto 5000
+    app.run(port=5000)
